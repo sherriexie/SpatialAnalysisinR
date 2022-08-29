@@ -1,0 +1,333 @@
+---
+title: "Analyzing geospatial data in R"
+author: "R/Medicine Conference Workshop"
+date: "August 24, 2022"
+output: 
+  html_document:
+    toc: true
+    toc_float: 
+        collapsed: false
+        smooth_scroll: true
+    depth: 4 
+    theme: paper 
+    highlight: tango
+---
+
+```{r global options, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+```
+
+## Spatial data overview
+
+First, let's understand how different types of spatial data is handled in R, beginning with vector data (i.e. points, lines and polygons) and ending with a brief raster example. 
+
+### Polygon data
+We will begin by looking at polyogn data. Let's look at Philadelphia census tracts as an example. Census shapefiles are free to download on the [Census website](https://www.census.gov/geo/maps-data/data/tiger-line.html), but we will load a version that has already been converted to an sf object. 
+
+```{r}
+library(sf)
+
+# Load philly tracts data
+pt_sf <- readRDS("data/philadelphia_tracts.rds")
+
+# Note philly.tracts is an sf ("simple feature") object of type "MULTIPOLYGON"
+class(pt_sf) 
+
+# sf objects can be handled like data frames using standard commands
+str(pt_sf)   # view structure
+head(pt_sf)  # view first several rows
+dim(pt_sf)   # view dimensions
+pt_sf[1,]    # select first row
+head(pt_sf$NAMELSAD10)  # select column by name  
+head(pt_sf[,7])         # select column by number
+
+# We can extract the geometry of philly.tracts with the st_geometry function
+pt_geo <- st_geometry(pt_sf)
+pt_geo
+pt_geo[[1]]        # perimeter coordinates for the first census tract of the sf
+pt_sf[1,]  # i.e. Census Tract 94
+
+pt_geo[[2]]        # perimeter coordinates for the second census tract of the sf
+pt_sf[2,]  # i.e. Census Tract 95
+
+# Plot the geometry of philly.tracts with the base plot function
+plot(pt_geo)
+
+# The base plot function has some aesthetic options we can use to tweak our plots
+plot(pt_geo, col = "lemonchiffon2")
+plot(pt_geo, lwd = 2, border = "red")
+
+```
+
+### Line data 
+
+Next let's look at an example of line data: streets in Philadelphia with bicycle access. This data was sourced directly from the [Philadelphia Bike Network](https://www.opendataphilly.org/dataset/bike-network). 
+
+```{r}
+bn_sf <- st_read("data/Bike_Network/Bike_Network.shp")  # read shapefile as an sf object
+class(bn_sf)  # bn.sf is an sf object, which is a subclass of data.frame
+
+# Once again, let's accss the spatial attributes of this sf object with the st_geometry command. 
+bn_geo <- st_geometry(bn_sf)
+bn_geo[[2]]  # line segment 2
+bn_sf[2,]
+
+# Let's plot the bike network data
+plot(bn_geo)
+
+```
+
+### Point data
+As an example of point data, we will work with crime incidents that occurred in Philadelphia in September 2018. The full publicly available crime incidents database for Philadelphia is maintained by the Philadelphia Police Department and is available on the [OpenDataPhilly](https://www.opendataphilly.org/dataset/crime-incidents) website.
+
+```{r}
+library(tidyverse)
+
+crime <- readRDS("data/crime_incidents.rds")
+
+# The crime data is an sf object of type POINT and includes information on the date, time and offense type for each incident
+class(crime)
+head(crime)
+
+plot(st_geometry(crime))
+
+# Let's take a look at offense types and use dplyr to filter by offense_type...
+table(crime$offense_type)
+homicide <- filter(crime, offense_type == "Homicide - Criminal")
+fraud <- filter(crime, offense_type == "Fraud")
+
+# Note subsets of an sf object are also sf objects
+class(homicide)
+class(fraud)
+
+# Plotting homicide and fraud incidents with the base plot function
+plot(st_geometry(homicide))
+
+```
+```{r}
+# Points by themselves are not very easy to understand. Let's layer them on top of the tract polygons with add = TRUE
+plot(pt_geo)
+plot(st_geometry(fraud), col = "blue", alpha = 0.1, add = TRUE)
+plot(st_geometry(homicide), col = "red", add = TRUE)
+legend("bottomright", legend = c("Fraud", "Homicide"), title = "Offense type:", col = c("blue", "red"), pch = 1, bty = "n")
+```
+
+### Raster data
+So far, we have considered point, line, and polygon data, all of which fall under the umbrella of vector data types. Rasters are a distinct GIS data type that we will consider only briefly because they cannot be handled with `sf` methods. We will look at the `volcano` dataset, which gives topographic information for Maunga Whau (a volcano located in Auckland, New Zealand) on a 10m by 10m grid. Because it is a relatively small raster, we can handle `volcano` using base functions. Larger rasters should be handled using the _raster_ package.
+
+```{r}
+
+library(datasets)
+
+# The volcano dataset is a 87x61 matrix
+class(volcano)
+str(volcano)
+filled.contour(volcano, color = terrain.colors, asp = 1)
+```
+
+## NYS Lyme incidence data
+
+We will use the example of New York State county-aggregated Lyme disease incidence for 2014-2016 to try our hand at spatial analysis. This data is publicly available and can be accessed at the [Health Data NY](https://health.data.ny.gov/Health/Community-Health-Lyme-Disease-Incidence-Rate-per-1/6sxr-cqij) website. Raw data can be downloaded in .csv format. If you're curious to see how this tabular data can be merged with a New York State county shapefile (available at [NYS GIS](https://gis.ny.gov/gisdata/inventories/details.cfm?DSID=927)), you can see how this is done in the 'prep_nys_lyme_data.R' script file located in the 'data' folder of our project directory. But for now, we'll start with this data that has already been merged and converted to an 'sf' object.
+
+```{r}
+library(sf)
+
+# Load NYS Lyme incidence data
+lyme <- readRDS("data/nys_lyme_data.rds")
+
+# Let's take a look at some data attributes
+class(lyme)
+#head(lyme)
+
+# Note that the variable Lyme.Incidence.Rate gives the county-level Lyme disease incidence per 100,000 population
+
+# Once again, we can plot the spatial attrbutes of this data
+plot(st_geometry(lyme))
+
+```
+
+This data is an example of regional rate data. An easy way to map this data is using the 'tmap' library. Let's load 'tmap' and create an interactive map with just a few lines of code.
+
+```{r}
+library(tmap)
+
+tmap_mode("view")  # set mode to interactive
+tm_shape(lyme) +    # specify sf object with geographic attribute of interest
+  tm_polygons("Lyme.Incidence.Rate")  # specify column with value of interest
+```
+
+We have a missing value in St. Lawrence county. Let's remove this row from the data so it doesn't throw an error later in our analysis.
+
+```{r}
+lyme <- lyme[!is.na(lyme$Lyme.Incidence.Rate),]
+
+# Let's map again 
+tmap_mode("view")  # set mode to interactive
+tm_shape(lyme) +    # specify sf object with geographic attribute of interest
+  tm_polygons("Lyme.Incidence.Rate")  # specify column with value of interest
+```
+
+
+## Global clustering (Moran's I)
+
+This section was adapted from a tutorial created by Manuel Gimmond, which can be found on his [github page](https://mgimond.github.io/simple_moransI_example/). 
+
+### Assess data distribution
+Let's begin by looking at the distribution of our Lyme incidence rate data. The Moran's *I* statistic is not robust to extreme values or outliers so we will need to transform our data if it deviates greatly from a normal distribution.
+
+```{r}
+# Five-number summary 
+summary(lyme$Lyme.Incidence.Rate)
+
+# Histogram
+hist(lyme$Lyme.Incidence.Rate)
+
+# Boxplot
+boxplot(lyme$Lyme.Incidence.Rate, horizontal = TRUE)
+
+```
+
+Our data is skewed strongly to the right with lots of outliers much greater than the mean. Let's see if a log transformation can make our data look more normal.
+
+```{r}
+
+# Create new variable that is the log-transformed incidence rate
+lyme$log_lyme_incidence <- log(lyme$Lyme.Incidence.Rate)
+
+# Histogram
+hist(lyme$log_lyme_incidence)
+
+# Boxplot
+boxplot(lyme$log_lyme_incidence, horizontal = TRUE)
+
+```
+
+That's much better! We can see what our log-transformed values look like on a map.
+
+```{r}
+
+tm_shape(lyme) +    # specify sf object with geographic attribute of interest
+  tm_polygons("log_lyme_incidence")  # specify column with value of interest
+
+```
+
+### Define neighboring polygons
+Now we're ready to begin our analysis. The first step is to define "neighboring" polygons. Recall that neighbors can be defined based on contiguity or distance or as the *k* nearest neighbors to each polygon. We'll use a **queen**-case contiguity-based definition, where any contiguous polygon that shares at least one vertex will be considered a neighbor. We can store the neighbors of each one of our polygons by creating an 'nb' object using the 'poly2nb' function from the 'spdep' library.
+
+```{r}
+library(spdep)
+
+# Create nb object from Lyme dataset
+lyme_nb <- poly2nb(lyme, queen = T) # queen case
+class(lyme_nb)
+str(lyme_nb)
+
+# View the neighbors of the first polygon
+lyme_nb[[1]]
+lyme$NAME[1]
+lyme$NAME[c(11, 20, 42, 45, 46, 47)]
+```
+### Assign weights to neighbors
+
+Next, we'll assign weights to each neighboring polygon. We'll use the simplest option ('style="W"), which assigns equal weight to each neighboring polygon. In other words, the weight applied to the neigbors of a polygon will equal 1/(no. of neighbors for that polygon).
+
+```{r}
+# Calculate weights from nb object, we'll specify style = "W" for equal weights
+lyme_weights <- nb2listw(lyme_nb, style = "W")
+class(lyme_weights)
+
+# View the weight of the first polygon's neighbors
+str(lyme_weights, max.level = 1) # view the structure of lw, we'll set max.level = 1 for easier viewing
+lyme_weights$weights[[1]]  # The weights of the neighbors for the first polygon (Albany)
+                 # Recall that Albany has 6 neighbors
+
+lyme$NAME[2]     # Allegheny
+lyme_nb[[2]]          # Allegheny has 4 neighbors
+lyme_weights$weights[[2]]  # The weights of the neighbors for Allegheny
+
+```
+### Perform hypothesis testing 
+Now we can calculate the Moran's *I* statistic and perform hypothesis testing using 'moran.test' (analytical calculation) and 'moran.mc' (via Monte Carlo simulations). These functions require that we specify the variable of interest and the list of neighbor weights for each polygon. The option 'alternative = "greater"' specifies testing for *positive* spatial autocorrelation, which is also the default for these functions. The 'moran.mc' function also requires that we specify the number of simulations with option 'nsim'.
+
+```{r}
+# Analytical test - quicker computation but sensitive to irregularly distributed polygons
+moran.test(lyme$log_lyme_incidence, lyme_weights, alternative = "greater")
+
+# Monte Carlo (MC) simulation is slower but the preferred  method to calculate an accurate p-value
+MC <- moran.mc(lyme$log_lyme_incidence, lyme_weights, nsim = 999, alternative = "greater")
+MC
+```
+We can see the results of the MC simulations graphically by passing the output of MC model to the 'plot' function.
+
+```{r}
+plot(MC)
+```
+
+## Local clustering (local Moran)
+
+The local Moran statistic is an extension of the Moran's *I* for the analysis of *local* (rather than global) spatial autocorrelation. There are some steps in common with the global clustering analysis we performed previously (for example, we have to calculate neighbor weights again) but there are key differences, due to particularities of the 'rgeoda' library.
+
+
+### Assign neighbor weights 
+We will once again find queen-case contiguous weights, though in 'rgeoda' we do this with the 'queen_weights' function. Note instead of a list of weights like we saw previously with the 'nb2listw' function, 'queen_weights' outputs an 'rgeoda' 'Weight' object, which has some nice features.
+
+```{r}
+library(rgeoda)
+
+# Find queen-case contiguous weights
+lyme_gweights <- queen_weights(lyme)
+class(lyme_gweights)
+
+# str function allows us to see a nice summary of the weights object
+str(lyme_gweights)
+
+# See the neighbors of the first polygon (Albany)
+get_neighbors(lyme_gweights, 1)
+lyme$NAME[1]
+lyme$NAME[get_neighbors(lyme_gweights, 1)]
+
+# See the neighbors of the first polygon (Allegany)
+get_neighbors(lyme_gweights, 2)
+lyme$NAME[2]
+lyme$NAME[get_neighbors(lyme_gweights, 2)]
+
+# See the neighbor weights of the first and second polygons
+get_neighbors_weights(lyme_gweights, 1)
+get_neighbors_weights(lyme_gweights, 2)
+
+```
+
+
+### Calculate Local Moran statistic
+
+Now you can use your 'geoda' 'Weights' to calculate the Local Moran statistic at each polygon.
+```{r}
+# We will coerce our data variable into a one-column data frame because this is the format required by the local_moran function
+log_lyme_df <- as.data.frame(lyme$log_lyme_incidence)
+
+# Now we can run the local_moran function
+lyme_lisa <- local_moran(lyme_gweights, log_lyme_df)
+
+# local_moran returns a LISA object
+class(lyme_lisa)
+
+# Let's take a closer look at this LISA object
+lyme_lisa$lisa_vals  # View local Moran's I values for each polygon
+lyme_lisa$p_vals     # View pseudo p-values
+
+```
+
+Finally, we can make a map of our results! 'rgeoda' includes some nifty functions ('map_colors', 'map_labels' and 'map_clusters' to help us with our mapping).
+
+```{r}
+map_colors <- lisa_colors(lyme_lisa)
+map_labels <- lisa_labels(lyme_lisa)
+map_clusters <- lisa_clusters(lyme_lisa)
+
+plot(st_geometry(lyme), 
+     col=sapply(map_clusters, function(x){return(map_colors[[x+1]])}), 
+     border = "#333333", lwd=0.2)
+legend('topright', legend = map_labels, fill = map_colors, border = "#eeeeee", cex = 0.7)
+```
+
+
